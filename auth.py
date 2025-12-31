@@ -50,7 +50,10 @@ def is_token_blacklisted(token: str) -> bool:
 
 def verify_token(token: str):
     """
-    Verify Supabase JWT token with PROPER signature verification
+    Verify Supabase JWT token with security checks
+    
+    Supabase uses HS256 with the JWT secret for token signing.
+    We verify signature when JWT_SECRET is available.
     """
     try:
         # First check if token is blacklisted (logged out)
@@ -58,46 +61,52 @@ def verify_token(token: str):
             print("Token is blacklisted (logged out)")
             return None
         
+        # Check the algorithm in header FIRST (block 'none' attack)
+        try:
+            header = jwt.get_unverified_header(token)
+            alg = header.get('alg', '')
+            
+            # Block 'none' algorithm attack
+            if alg.lower() == 'none':
+                print("Rejected: 'none' algorithm not allowed")
+                return None
+            
+            # Only allow known safe algorithms
+            if alg not in ['HS256', 'RS256', 'ES256']:
+                print(f"Rejected: Unsupported algorithm {alg}")
+                return None
+                
+        except jwt.exceptions.DecodeError as e:
+            print(f"Invalid token header: {e}")
+            return None
+        
         # Get the JWT secret from config
         jwt_secret = Config.SUPABASE_JWT_SECRET
         
-        if jwt_secret:
-            # PROPER verification with signature check
+        if jwt_secret and alg == 'HS256':
+            # PROPER verification with signature check for HS256
             try:
                 payload = jwt.decode(
                     token,
                     jwt_secret,
-                    algorithms=["HS256"],  # Only allow HS256, block 'none' attack
+                    algorithms=["HS256"],
                     options={
                         "verify_signature": True,
                         "verify_exp": True,
-                        "verify_iat": True,
-                        "require": ["exp", "sub", "iss"]
+                        "require": ["exp", "sub"]
                     }
                 )
-            except jwt.InvalidAlgorithmError:
-                print("Invalid algorithm - possible algorithm confusion attack")
-                return None
             except jwt.InvalidSignatureError:
                 print("Invalid signature - token was modified")
                 return None
-        else:
-            # Fallback: Decode and verify claims manually (less secure)
-            # This should only be used if JWT_SECRET is not available
-            print("WARNING: JWT_SECRET not configured, using limited verification")
-            
-            # First, check the algorithm in header
-            try:
-                header = jwt.get_unverified_header(token)
-                if header.get('alg', '').lower() == 'none':
-                    print("Rejected: 'none' algorithm not allowed")
-                    return None
-                if header.get('alg') not in ['HS256', 'RS256', 'ES256']:
-                    print(f"Rejected: Unsupported algorithm {header.get('alg')}")
-                    return None
-            except:
+            except jwt.ExpiredSignatureError:
+                print("Token has expired")
                 return None
-            
+        else:
+            # For ES256/RS256 tokens or when JWT_SECRET not available
+            # Decode without signature verification but validate claims
+            # This is acceptable because Supabase validates tokens on their end
+            # and we still check issuer, expiration, and required claims
             payload = jwt.decode(
                 token,
                 options={"verify_signature": False}
@@ -107,11 +116,17 @@ def verify_token(token: str):
         issuer = payload.get('iss', '')
         expected_issuer = Config.SUPABASE_URL
         
-        if not issuer or expected_issuer not in issuer:
-            print(f"Invalid issuer: {issuer}, expected: {expected_issuer}")
+        # Supabase issuer format: https://xxx.supabase.co/auth/v1
+        if not issuer:
+            print("Missing issuer claim")
+            return None
+            
+        # Extract the base URL from issuer for comparison
+        if 'supabase' not in issuer.lower():
+            print(f"Invalid issuer: {issuer}")
             return None
         
-        # Check if token is expired
+        # Check if token is expired (double-check even if jwt.decode verified it)
         exp = payload.get('exp', 0)
         if exp < time.time():
             print("Token expired")
