@@ -7,7 +7,11 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from supabase import create_client, ClientOptions
 from config import Config
-from auth import require_auth, rate_limit, cooldown_required
+from auth import (
+    require_auth, rate_limit, cooldown_required, 
+    login_rate_limit, record_login_attempt, clear_login_attempts,
+    blacklist_token
+)
 from game_logic import FishingGame
 import traceback
 
@@ -121,8 +125,9 @@ def signup():
         return jsonify({'error': f'{type(e).__name__}: {str(e)}'}), 500
 
 @app.route('/api/auth/login', methods=['POST'])
+@login_rate_limit  # Protect against brute force
 def login():
-    """Login player"""
+    """Login player with brute force protection"""
     try:
         data = request.get_json()
         email = data.get('email')
@@ -132,12 +137,26 @@ def login():
             return jsonify({'error': 'Email and password required'}), 400
         
         # Sign in
-        response = supabase.auth.sign_in_with_password({
-            'email': email,
-            'password': password
-        })
+        try:
+            response = supabase.auth.sign_in_with_password({
+                'email': email,
+                'password': password
+            })
+        except Exception as auth_error:
+            # Record failed attempt
+            client_ip = request.remote_addr or 'unknown'
+            record_login_attempt(f"ip:{client_ip}")
+            record_login_attempt(f"email:{email}")
+            
+            # Return generic error (prevent account enumeration)
+            return jsonify({'error': 'Invalid credentials'}), 401
         
         if response.session:
+            # Clear failed attempts on success
+            client_ip = request.remote_addr or 'unknown'
+            clear_login_attempts(f"ip:{client_ip}")
+            clear_login_attempts(f"email:{email}")
+            
             return jsonify({
                 'message': 'Login successful',
                 'session': {
@@ -150,11 +169,40 @@ def login():
                 }
             }), 200
         else:
+            # Record failed attempt
+            client_ip = request.remote_addr or 'unknown'
+            record_login_attempt(f"ip:{client_ip}")
+            record_login_attempt(f"email:{email}")
+            
             return jsonify({'error': 'Invalid credentials'}), 401
             
     except Exception as e:
         print(f"Login error: {e}")
-        return jsonify({'error': str(e)}), 400
+        return jsonify({'error': 'Invalid credentials'}), 401  # Generic error
+
+@app.route('/api/auth/logout', methods=['POST'])
+@require_auth
+def logout():
+    """Logout player and invalidate token"""
+    try:
+        # Blacklist the current token
+        token = getattr(request, 'token', None)
+        if token:
+            blacklist_token(token)
+        
+        # Also sign out from Supabase
+        try:
+            supabase.auth.sign_out()
+        except:
+            pass  # Token might already be invalid on Supabase side
+        
+        return jsonify({
+            'message': 'Logged out successfully'
+        }), 200
+        
+    except Exception as e:
+        print(f"Logout error: {e}")
+        return jsonify({'error': 'Logout failed'}), 500
 
 # ============================================
 # GAME ENDPOINTS (Require Authentication)
