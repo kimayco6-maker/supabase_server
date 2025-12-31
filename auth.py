@@ -281,8 +281,13 @@ def rate_limit(max_requests=30, window_seconds=60):
     return decorator
 
 
-def check_cooldown(user_id: str, cooldown_seconds: float) -> tuple:
-    """Check if user is on cooldown (thread-safe)"""
+def check_and_set_cooldown(user_id: str, cooldown_seconds: float) -> tuple:
+    """
+    ATOMIC check and set cooldown (thread-safe)
+    Returns (can_proceed, remaining_seconds)
+    
+    This is atomic - no race condition between check and set
+    """
     now = time.time()
     
     with _cooldown_lock:
@@ -293,18 +298,19 @@ def check_cooldown(user_id: str, cooldown_seconds: float) -> tuple:
             if time_elapsed < cooldown_seconds:
                 remaining = cooldown_seconds - time_elapsed
                 return False, remaining
-    
-    return True, 0
-
-
-def set_cooldown(user_id: str):
-    """Set cooldown for user (thread-safe)"""
-    with _cooldown_lock:
-        cooldown_storage[user_id] = time.time()
+        
+        # ATOMIC: Set cooldown immediately while still holding the lock
+        cooldown_storage[user_id] = now
+        return True, 0
 
 
 def cooldown_required(cooldown_seconds):
-    """Decorator to enforce cooldown between casts (thread-safe)"""
+    """
+    Decorator to enforce cooldown between casts (thread-safe, atomic)
+    
+    Uses atomic check-and-set to prevent race conditions where multiple
+    concurrent requests could slip through before cooldown is set.
+    """
     def decorator(f):
         @wraps(f)
         def decorated_function(*args, **kwargs):
@@ -312,8 +318,8 @@ def cooldown_required(cooldown_seconds):
             if not user_id:
                 return jsonify({'error': 'Unauthorized'}), 401
             
-            # Check cooldown
-            can_cast, remaining = check_cooldown(user_id, cooldown_seconds)
+            # ATOMIC check and set cooldown
+            can_cast, remaining = check_and_set_cooldown(user_id, cooldown_seconds)
             
             if not can_cast:
                 return jsonify({
@@ -322,16 +328,8 @@ def cooldown_required(cooldown_seconds):
                     'remaining_seconds': remaining
                 }), 429
             
-            # Set cooldown BEFORE executing (prevents race condition)
-            set_cooldown(user_id)
-            
-            # Execute function
-            result = f(*args, **kwargs)
-            
-            # If the cast failed, we could optionally reset cooldown
-            # but keeping it prevents rapid retry attacks
-            
-            return result
+            # Execute function (cooldown already set atomically)
+            return f(*args, **kwargs)
         
         return decorated_function
     return decorator
