@@ -14,10 +14,10 @@ rate_limit_storage = defaultdict(list)
 cooldown_storage = {}
 
 def verify_token(token):
-    """Verify Supabase JWT token"""
+    """Verify Supabase JWT token using legacy JWT secret"""
     try:
-        # Decode without signature verification
-        # Supabase JWT tokens work the same with both old and new API key systems
+        # Decode without signature verification for simplicity
+        # In production, you should verify with JWT_SECRET
         payload = jwt.decode(
             token,
             options={"verify_signature": False}

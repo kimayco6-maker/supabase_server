@@ -11,9 +11,10 @@ load_dotenv()
 class Config:
     """Application configuration"""
     
-    # Supabase Configuration - NEW API KEY SYSTEM
+    # Supabase Configuration - Legacy JWT Keys (Python SDK requires these)
     SUPABASE_URL = os.getenv('SUPABASE_URL')
-    SUPABASE_SECRET_KEY = os.getenv('SUPABASE_SECRET_KEY')
+    SUPABASE_SERVICE_KEY = os.getenv('SUPABASE_SERVICE_KEY')
+    SUPABASE_JWT_SECRET = os.getenv('SUPABASE_JWT_SECRET')
     
     # Flask Configuration
     SECRET_KEY = os.getenv('FLASK_SECRET_KEY', 'dev-secret-key-change-in-production')
@@ -28,7 +29,8 @@ class Config:
         """Validate required configuration"""
         required = [
             'SUPABASE_URL',
-            'SUPABASE_SECRET_KEY'
+            'SUPABASE_SERVICE_KEY',
+            'SUPABASE_JWT_SECRET'
         ]
         
         missing = []

@@ -1,6 +1,7 @@
 """
 Fishing Game Backend API
-Secure server-side game logic with Supabase (NEW API Key System)
+Secure server-side game logic with Supabase
+Note: Python SDK requires Legacy JWT keys (service_role), not new sb_secret_* keys
 """
 from flask import Flask, request, jsonify
 from flask_cors import CORS
@@ -31,11 +32,12 @@ except ValueError as e:
     print("Please set required environment variables")
     exit(1)
 
-# Initialize Supabase client with NEW API key system
+# Initialize Supabase client with Legacy JWT service_role key (Python SDK requirement)
 print(f"Initializing Supabase with URL: {Config.SUPABASE_URL}")
-print(f"Secret key starts with: {Config.SUPABASE_SECRET_KEY[:20]}...")
+print(f"Service key starts with: {Config.SUPABASE_SERVICE_KEY[:20]}...")
+print(f"Service key contains 'service_role': {'service_role' in Config.SUPABASE_SERVICE_KEY}")
 
-# Create client with NEW secret key
+# Create client with service_role key
 options = ClientOptions(
     auto_refresh_token=False,
     persist_session=False,
@@ -43,7 +45,7 @@ options = ClientOptions(
 )
 supabase = create_client(
     Config.SUPABASE_URL,
-    Config.SUPABASE_SECRET_KEY,
+    Config.SUPABASE_SERVICE_KEY,
     options=options
 )
 
